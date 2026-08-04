@@ -49,6 +49,7 @@
   .ph .nm{font-size:12px;color:#e6eedd;margin-top:6px;font-weight:bold}
   .ph .en{font-size:10px;color:#8fa886;font-style:italic}
   .ph .pt{font-size:15px;color:#ffd97a;font-weight:bold;margin-top:3px}
+  .ph .dt{font-size:10px;color:#8fa887;margin-top:2px;letter-spacing:.2px}
   .ph .fb{font-size:10px;color:#9db394;padding:0 6px;margin-top:3px;line-height:1.3}
   .ph.locked{opacity:.35}
   .ph.locked .sil{height:92px;display:flex;align-items:center;justify-content:center;font-size:30px;color:#4c6144}
@@ -153,6 +154,7 @@
 <div class="scr" id="sPack"></div>
 <div class="scr" id="sMap"></div>
 <div class="scr" id="sTrav"></div>
+<div class="scr" id="sPren"></div>
 <div class="scr" id="sRes"></div>
 <div class="scr" id="sAlbum"></div>
 
@@ -1892,6 +1894,8 @@ function aktW(sp){ const f=denny().faza.id; return (AKT_W[sp.act]||AKT_W.den)[f]
 
 /* ------------------------------------------------------------- ULOŽENIE -- */
 const STORE_KEY="bbcfoto_v1";
+// verejná adresa hry — sem smerujú odkazy na prenos postupu z lokálneho súboru
+const HOME_URL="https://vratkomichalik-ihre.github.io/adamko/";
 let mem={album:{},best:0};
 function load(){
   try{ const r=localStorage.getItem(STORE_KEY), q=r?JSON.parse(r):null;
@@ -3106,7 +3110,7 @@ function finishShot(){
       beep(700,0.14,"sine",0.13); setTimeout(()=>beep(940,0.18,"sine",0.13),150); }
   }
   const cur=mem.album[r.sp.id];
-  if(!cur || cur.pts<r.pts){ mem.album[r.sp.id]={pts:r.pts,img}; save(); }
+  if(!cur || cur.pts<r.pts){ mem.album[r.sp.id]={pts:r.pts,img,t:Date.now()}; save(); }
   const nm = LANG==="sk"? r.sp.sk : r.sp.en;
   const hv = r.kvalita>1.55? "★★★" : r.kvalita>0.95? "★★☆" : r.kvalita>0.55? "★☆☆" : "☆☆☆";
   toast(r.first? t("newSpecies")+" "+nm : nm, hv+"   +"+r.pts+" "+t("pts"), r.fb);
@@ -3841,7 +3845,8 @@ const sMenu=document.getElementById("sMenu"), sRes=document.getElementById("sRes
       sCamp=document.getElementById("sCamp"), sShop=document.getElementById("sShop"),
       sPack=document.getElementById("sPack"), sMap=document.getElementById("sMap"),
       sTrav=document.getElementById("sTrav");
-const ALLSCR=[sMenu,sRes,sAlbum,sChar,sCamp,sShop,sPack,sMap,sTrav];
+const sPren=document.getElementById("sPren");
+const ALLSCR=[sMenu,sRes,sAlbum,sChar,sCamp,sShop,sPack,sMap,sTrav,sPren];
 function show(el){ ALLSCR.forEach(s=>s.classList.remove("on")); if(el) el.classList.add("on"); }
 function on(id,fn){
   const scope=ALLSCR.find(x=>x.classList.contains("on"))||document;
@@ -3850,6 +3855,119 @@ function on(id,fn){
 }
 
 /* ---- ÚVOD ------------------------------------------------------------- */
+/* ---- PRENOS POSTUPU MEDZI ZARIADENIAMI --------------------------------
+   Postup (peniaze, vybavenie, album) žije v pamäti prehliadača, nie v súbore.
+   Preto ho vieme zabaliť do krátkeho kódu a preniesť inam. Miniatúry fotiek
+   sa do kódu nedávajú — sú to desiatky kB a kód by sa nedal prilepiť. */
+function zbalPostup(){
+  const alb={};
+  for(const k in mem.album){ const a=mem.album[k]; if(a) alb[k]={pts:a.pts,t:a.t||0}; }
+  const data={v:1, profile:mem.profile||null, album:alb, best:mem.best||0};
+  const txt=JSON.stringify(data);
+  // unescape(encodeURIComponent(...)) spraví z UTF-8 bajty, ktoré btoa zvládne
+  return btoa(unescape(encodeURIComponent(txt))).replace(/=+$/,"");
+}
+function rozbalPostup(kod){
+  const c=(kod||"").replace(/\s+/g,"");
+  if(!c) throw new Error("prazdny");
+  const txt=decodeURIComponent(escape(atob(c)));
+  const d=JSON.parse(txt);
+  if(!d || typeof d!=="object" || !d.profile) throw new Error("tvar");
+  return d;
+}
+function pouziPostup(d){
+  mem.profile=d.profile;
+  mem.best=d.best||0;
+  if(!mem.album || typeof mem.album!=="object") mem.album={};
+  for(const k in (d.album||{})){
+    const nov=d.album[k], stary=mem.album[k];
+    // fotku, ktorú tu už máme, si necháme — kód ju neobsahuje
+    if(!stary || (stary.pts||0) < (nov.pts||0)) mem.album[k]={pts:nov.pts, img:(stary&&stary.img)||null, t:nov.t||0};
+  }
+  _profilOK=false;
+  save();
+}
+function renderPrenos(){
+  const maPostup=!!mem.profile;
+  const kod=maPostup? zbalPostup() : "";
+  // z lokálneho súboru (file://) žiadny origin nie je — vtedy použijeme
+  // adresu, na ktorej hra beží pre tablet
+  const zaklad=(location.protocol==="http:"||location.protocol==="https:")
+      ? location.origin+location.pathname : HOME_URL;
+  const odkaz=(zaklad && kod)? zaklad+"#k="+encodeURIComponent(kod) : "";
+  const poc=maPostup? Object.keys(mem.album||{}).length : 0;
+  sPren.innerHTML=`
+   <h1>${TX("PRENOS POSTUPU","TRANSFER PROGRESS")}</h1>
+   <div class="sub">${TX("Prenes hru aj s postupom na iné zariadenie","Move your game and progress to another device")}</div>
+   <div class="card"><h2>${TX("Ako to funguje","How it works")}</h2>
+     <p>${TX("Postup nie je v súbore s hrou — je uložený v pamäti tohto prehliadača. Tu si ho zabalíš do kódu a v druhom zariadení ho vložíš.",
+             "Your progress is not in the game file — it lives in this browser's storage. Pack it into a code here and paste it on the other device.")}</p>
+     <p style="color:#a8bfa0">${TX("Kód nesie peniaze, hodnosť, vybavenie aj to, ktoré zvieratá už máš v albume. Malé náhľady fotiek v ňom nie sú — album ich na novom zariadení doplní, keď zviera odfotíš znova.",
+             "The code carries money, rank, gear and which animals are already in your album. The little photo thumbnails are not included — the album fills them in again when you re-photograph an animal.")}</p>
+   </div>
+   ${maPostup?`
+   <div class="card"><h2>1. ${TX("Odtiaľto vezmi","Take it from here")}</h2>
+     <p style="color:#a8bfa0">${TX("Album","Album")}: ${poc} ${TX("druhov","species")}</p>
+     <textarea id="pKod" readonly style="width:100%;height:88px;background:#101a10;color:#cfe0c4;
+       border:1px solid #4d6b45;border-radius:8px;padding:9px;font-family:monospace;font-size:11px">${kod}</textarea>
+     <div class="row" style="margin-top:8px">
+       <button class="btn" id="bKopKod">${TX("Kopírovať kód","Copy code")}</button>
+       ${odkaz?`<button class="btn" id="bKopOdk">${TX("Kopírovať odkaz s postupom","Copy link with progress")}</button>`:""}
+     </div>
+     ${odkaz?`<p style="color:#a8bfa0;margin-top:8px">${TX("Odkaz si pošli do druhého zariadenia (správou, mailom) a otvor ho — postup sa načíta sám.",
+                "Send the link to the other device (message, e-mail) and open it — the progress loads by itself.")}</p>`:""}
+   </div>`:`
+   <div class="card"><p>${TX("V tomto prehliadači zatiaľ žiadny postup nie je.","There is no saved progress in this browser yet.")}</p></div>`}
+   <div class="card"><h2>2. ${TX("Sem vlož z iného zariadenia","Paste one from another device")}</h2>
+     <textarea id="pVstup" placeholder="${TX("Sem prilep kód…","Paste the code here…")}" style="width:100%;height:88px;
+       background:#101a10;color:#cfe0c4;border:1px solid #4d6b45;border-radius:8px;padding:9px;
+       font-family:monospace;font-size:11px"></textarea>
+     <div class="row" style="margin-top:8px">
+       <button class="btn gold" id="bNacitaj">${TX("Načítať postup","Load progress")}</button>
+     </div>
+     <p id="pStav" style="margin-top:8px"></p>
+   </div>
+   <div class="row"><button class="btn" id="bBackPren">${t("back")}</button></div>`;
+  show(sPren);
+  const stav=(txt,ok)=>{ const e=document.getElementById("pStav");
+    if(e){ e.textContent=txt; e.style.color=ok?"#9fd48a":"#e2a06a"; } };
+  const kopiruj=(txt,btn)=>{
+    const hot=()=>{ const b=document.getElementById(btn); if(b) b.textContent=TX("Skopírované ✓","Copied ✓"); };
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(txt).then(hot,()=>{});
+    } else { const ta=document.getElementById("pKod");
+      if(ta){ ta.value=txt; ta.select(); try{document.execCommand("copy");hot();}catch(e){} ta.value=kod; } }
+  };
+  on("bKopKod",()=>kopiruj(kod,"bKopKod"));
+  on("bKopOdk",()=>kopiruj(odkaz,"bKopOdk"));
+  on("bNacitaj",()=>{
+    const v=(document.getElementById("pVstup")||{}).value||"";
+    let d; try{ d=rozbalPostup(v); }
+    catch(e){ stav(TX("Kód sa nepodarilo prečítať — skopíruj ho prosím celý.",
+                      "Could not read the code — please copy all of it."),false); return; }
+    if(mem.profile && !confirm(TX("V tomto prehliadači už nejaký postup je. Prepísať ho?",
+                                  "There is already progress in this browser. Overwrite it?"))) return;
+    pouziPostup(d);
+    stav(TX("Hotovo — postup je načítaný.","Done — progress loaded."),true);
+    setTimeout(()=>{ try{ renderCamp(); }catch(e){ renderMenu(); } },700);
+  });
+  on("bBackPren",renderMenu);
+}
+// postup poslaný odkazom: .../#k=<kod>
+function skusOdkaz(){
+  const h=location.hash||"";
+  if(h.indexOf("#k=")!==0) return false;
+  let d; try{ d=rozbalPostup(decodeURIComponent(h.slice(3))); }catch(e){ return false; }
+  const md=mem.profile? (mem.profile.money||0) : 0;
+  const nd=d.profile.money||0;
+  if(mem.profile && !confirm(TX("Odkaz nesie uložený postup ("+eur(nd)+"). V tomto prehliadači už postup je ("+eur(md)+"). Nahradiť ho?",
+                                "This link carries saved progress ("+eur(nd)+"). This browser already has progress ("+eur(md)+"). Replace it?"))){
+    history.replaceState(null,"",location.pathname); return false; }
+  pouziPostup(d);
+  history.replaceState(null,"",location.pathname);
+  return true;
+}
+
 function renderMenu(){
   const nova = !mem.profile;
   sMenu.innerHTML=`
@@ -3861,6 +3979,7 @@ function renderMenu(){
      <button class="btn gold" id="bGo">${nova?TX("NOVÁ HRA","NEW GAME"):TX("POKRAČOVAŤ","CONTINUE")}</button>
      ${nova?"":`<button class="btn" id="bNew">${TX("Nová hra od začiatku","Start over")}</button>`}
      <button class="btn" id="bAlb">${t("album")}</button>
+     <button class="btn" id="bPren">${TX("Prenos postupu","Transfer progress")}</button>
    </div>`;
   on("bGo",()=>{ audioInit();
     if(!mem.profile){ renderChars(); return; }
@@ -3879,6 +3998,7 @@ function renderMenu(){
     _profilOK=true; save(); renderChars();
   });
   on("bAlb",renderAlbum);
+  on("bPren",renderPrenos);
   show(sMenu);
 }
 
@@ -4081,6 +4201,17 @@ function renderTravel(){
 }
 
 /* ---- ALBUM ------------------------------------------------------------ */
+// "3. 8. 2026 o 18:42" / "3 Aug 2026, 18:42"
+function datumCas(ms){
+  if(!ms) return "";
+  const d=new Date(ms);
+  if(isNaN(d.getTime())) return "";
+  const dv=n=>(n<10?"0":"")+n;
+  const cas=dv(d.getHours())+":"+dv(d.getMinutes());
+  if(LANG==="sk") return d.getDate()+". "+(d.getMonth()+1)+". "+d.getFullYear()+" o "+cas;
+  const M=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return d.getDate()+" "+M[d.getMonth()]+" "+d.getFullYear()+", "+cas;
+}
 function renderAlbum(){
   const total=SPECIES.length, found=SPECIES.filter(s=>mem.album[s.id]).length;
   let html=`<h1>${t("albumT")}</h1><div class="sub">${found} ${t("albumS")} ${total} ${t("found")}</div>`;
@@ -4092,7 +4223,15 @@ function renderAlbum(){
     for(const s of zoz){
       const a=mem.album[s.id];
       const nm = LANG==="sk"? s.sk:s.en, other = LANG==="sk"? s.en:s.sk;
-      if(a) html+=`<div class="ph"><img src="${a.img}"><div class="nm">${nm}</div><div class="en">${other}</div><div class="pt">${a.pts} ${t("pts")}</div><div class="fb">${t("rare")[s.rar]}</div></div>`;
+      if(a){
+        const dt=datumCas(a.t);
+        const obr = a.img? `<img src="${a.img}">`
+                         : `<div class="sil" style="opacity:.5">${s.icon}</div>`;
+        html+=`<div class="ph">${obr}<div class="nm">${nm}</div><div class="en">${other}</div>
+          <div class="pt">${a.pts} ${t("pts")}</div>
+          ${dt?`<div class="dt">${dt}</div>`:""}
+          <div class="fb">${t("rare")[s.rar]}</div></div>`;
+      }
       else   html+=`<div class="ph locked"><div class="sil">${s.icon}</div><div class="nm">? ? ?</div><div class="en">${t("rare")[s.rar]}</div></div>`;
     }
     html+=`</div></div>`;
@@ -4104,7 +4243,9 @@ function renderAlbum(){
       <p class="fact"><b>${t("lat")}:</b> <i>${s.lat}</i><br>
       <b>${t("live")}:</b> ${f.live}<br><b>${t("eat")}:</b> ${f.eat}<br>
       <b>${t("intr")}:</b> ${f.intr}<br><b>${t("stat")}:</b> ${f.stat}<br>
-      <b>${t("bestp")}:</b> ${mem.album[s.id].pts} ${t("pts")}</p></div>`;
+      <b>${t("bestp")}:</b> ${mem.album[s.id].pts} ${t("pts")}${
+        datumCas(mem.album[s.id].t)? " · "+TX("odfotené","taken")+" "+datumCas(mem.album[s.id].t) : ""
+      }</p></div>`;
   }
   html+=`<div class="row"><button class="btn" id="bBackAlb">${t("back")}</button></div>`;
   sAlbum.innerHTML=html; show(sAlbum);
@@ -4191,7 +4332,9 @@ function setLang(l){
   hintEl.textContent=t("clickPlay"); popisTlacidiel(); skontrolujOtocenie();
 }
 popisTlacidiel();
-renderMenu();
+let _zOdkazu=false;
+try{ _zOdkazu=skusOdkaz(); }catch(e){ console.error(e); }
+if(_zOdkazu){ try{ renderCamp(); }catch(e){ renderMenu(); } } else renderMenu();
 
 </script>
 </body>
