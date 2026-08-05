@@ -14,8 +14,14 @@
   *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{width:100%;height:100%;overflow:hidden;background:#0b0d0c;font-family:'Trebuchet MS',Verdana,sans-serif;color:#f2ede2;user-select:none}
   #cv{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:crosshair;touch-action:none}
-  .scr{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;
-       background:radial-gradient(ellipse at 50% 40%,#20301f 0%,#0d1310 70%,#070908 100%);z-index:10;padding:20px;overflow-y:auto}
+  /* justify-content:center by pri dlhom obsahu odrezal vrch nad scrollTop=0 a
+     nedal sa dorolovať. "safe center" centruje len keď sa obsah zmestí; kde ho
+     prehliadač nepozná, ostane flex-start a všetko je dosiahnuteľné. */
+  .scr{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;
+       justify-content:flex-start;justify-content:safe center;
+       background:radial-gradient(ellipse at 50% 40%,#20301f 0%,#0d1310 70%,#070908 100%);
+       z-index:10;padding:20px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .scr>*{flex-shrink:0}
   .scr.on{display:flex}
   h1{font-size:clamp(30px,7vw,62px);letter-spacing:3px;color:#ffd97a;text-shadow:0 4px 20px rgba(0,0,0,.7);margin-bottom:4px;text-align:center}
   .sub{font-size:clamp(12px,2.4vw,17px);color:#a8bfa0;letter-spacing:5px;text-transform:uppercase;margin-bottom:28px;text-align:center}
@@ -28,14 +34,16 @@
   .btn:hover{background:linear-gradient(#4e8446,#31572c);transform:translateY(-2px)}
   .btn.gold{background:linear-gradient(#b8892f,#7d5a17);border-color:#ffd97a;color:#fff8e4}
   .btn.gold:hover{background:linear-gradient(#d0a03f,#96701f)}
-  .btn.sm{font-size:14px;padding:9px 18px}
+  .btn.sm{font-size:14px;padding:12px 18px;min-height:44px}
   .row{display:flex;flex-wrap:wrap;justify-content:center;align-items:center}
   .kbd{display:inline-block;background:#1d2a1c;border:1px solid #4d6b45;border-radius:5px;padding:1px 8px;font-size:12px;color:#ffd97a;margin:0 3px}
   #lang{position:absolute;top:14px;right:14px;z-index:20;display:flex;gap:6px}
   #lang button{background:rgba(0,0,0,.5);border:1px solid #6f9d63;color:#cfe0c4;border-radius:7px;padding:6px 11px;font-size:13px;cursor:pointer;font-family:inherit}
   #lang button.act{background:#ffd97a;color:#20301f;font-weight:bold;border-color:#ffd97a}
-  #lang button{min-width:40px;min-height:36px}
-  #lang.hraje{opacity:.5;top:auto;bottom:6px;right:8px;transform:scale(.82);transform-origin:100% 100%}
+  #lang button{min-width:46px;min-height:44px}
+  /* Počas expedície lišta preč: na 1024 px a menej zasahovala do tlačidla STÁŤ
+     a ťuknutie prepínalo jazyk namiesto znehybnenia. */
+  #lang.hraje{display:none}
   #otoc .ok{margin-top:20px;background:#2d4a28;border:1px solid #6f9d63;color:#dff0d6;border-radius:9px;
     padding:11px 20px;font-size:15px;cursor:pointer;font-family:inherit}
   #otoc{position:absolute;inset:0;z-index:40;display:none;flex-direction:column;align-items:center;justify-content:center;
@@ -62,7 +70,7 @@
   #toast .t1{font-size:22px;font-weight:bold;color:#ffd97a}
   #toast .t2{font-size:14px;color:#dfe8d6;margin-top:3px}
   #toast .t3{font-size:12px;color:#93ab8b;margin-top:5px;font-style:italic}
-  #touch{position:absolute;inset:0;z-index:5;display:none;pointer-events:none}
+  #touch{position:absolute;inset:0;z-index:30;display:none;pointer-events:none}
   #touch.on{display:block}
   #tbar{position:absolute;left:0;right:0;bottom:0;height:var(--pas,110px);
         display:flex;align-items:center;justify-content:center;gap:clamp(6px,1.4vw,16px);
@@ -1918,8 +1926,30 @@ load();
 
 /* ---------------------------------------------------------------- ZVUK -- */
 let AC=null, master=null, ambGain=null, soundOn=true;
+let _audioTikaje=[];              // všetky intervaly zvuku, nech sa dajú zastaviť
+// Na tablete prehliadač po prepnutí preč beží ďalej a zvuk hral aj po zavretí.
+// Preto pri každom odchode zo stránky kontext uspíme a pri návrate prebudíme.
+function audioPauza(){
+  if(!AC) return;
+  try{ if(AC.state==="running") AC.suspend(); }catch(e){}
+}
+function audioPokracuj(){
+  if(!AC||!soundOn) return;
+  try{ if(AC.state==="suspended") AC.resume(); }catch(e){}
+}
+function audioStop(){             // definitívny koniec — pri zatváraní stránky
+  _audioTikaje.forEach(id=>clearInterval(id)); _audioTikaje=[];
+  if(!AC) return;
+  try{ AC.close(); }catch(e){}
+  AC=null; master=null; ambGain=null;
+}
+document.addEventListener("visibilitychange",()=>{ document.hidden? audioPauza() : audioPokracuj(); });
+window.addEventListener("pagehide",audioStop);
+window.addEventListener("beforeunload",audioStop);
+window.addEventListener("blur",audioPauza);
+window.addEventListener("focus",audioPokracuj);
 function audioInit(){
-  if(AC){ if(AC.state==="suspended") AC.resume(); return; }
+  if(AC){ if(AC.state==="suspended"&&soundOn) AC.resume(); return; }
   try{ AC=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return; }
   master=AC.createGain(); master.gain.value=0.55; master.connect(AC.destination);
   // ambient: šum vetra
@@ -1928,17 +1958,21 @@ function audioInit(){
   const src=AC.createBufferSource(); src.buffer=buf; src.loop=true;
   const f=AC.createBiquadFilter(); f.type="lowpass"; f.frequency.value=340; f.Q.value=0.6;
   ambGain=AC.createGain(); ambGain.gain.value=0.10;
-  setInterval(()=>{ if(ambGain&&game.screen==="play")
-    ambGain.gain.value=0.055+0.10*clamp(game.windS||0.5,0,1); },1200);
+  _audioTikaje.push(setInterval(()=>{ if(!ambGain) return;
+    const ciel = (game.screen==="play"&&soundOn)? 0.040+0.085*clamp(game.windS||0.5,0,1) : 0.0;
+    try{ ambGain.gain.setTargetAtTime(ciel,AC.currentTime,0.6); }catch(e){ ambGain.gain.value=ciel; }
+  },900));
   src.connect(f); f.connect(ambGain); ambGain.connect(master); src.start();
-  setInterval(()=>{
-    if(!soundOn||game.screen!=="play") return;
+  _audioTikaje.push(setInterval(()=>{
+    if(!soundOn||game.screen!=="play"||document.hidden) return;
     const noc = (typeof denny==="function" && game.spot) ? denny().svet<0.36 : false;
-    if(noc){ if(Math.random()<0.75) cvrcek(); }
-    else if(Math.random()<0.45) chirp();
-  },1500);
+    if(noc){ if(Math.random()<0.80) cvrcek(); if(Math.random()<0.12) sova(); }
+    else { if(Math.random()<0.55) chirp(); if(Math.random()<0.10) hmyz(); }
+  },1500));
   // hlasy zvierat naokolo
-  setInterval(()=>{ if(Math.random()<0.62) hlasZvierata(); },2600);
+  _audioTikaje.push(setInterval(()=>{
+    if(document.hidden) return;
+    if(Math.random()<0.62) hlasZvierata(); },2600));
 }
 function beep(freq,dur,type,vol,pan,glide){
   if(!AC||!soundOn) return;
@@ -1955,16 +1989,105 @@ function beep(freq,dur,type,vol,pan,glide){
   } else g.connect(master);
   o.start(); o.stop(AC.currentTime+dur+0.02);
 }
+/* ---- STAVEBNÉ KAMENE ZVUKU -------------------------------------------
+   Zvieracie hlasy nie sú čisté pípnutia — majú dych, chvenie a ozvenu.
+   Preto tu máme šum (dych), formanty (rezonancia hrdla) a dozvuk. */
+function _vystup(pan){
+  if(pan===undefined || !AC.createStereoPanner) return master;
+  const pn=AC.createStereoPanner(); pn.pan.value=clamp(pan,-1,1);
+  pn.connect(master); return pn;
+}
+// dych / vrčanie: filtrovaný šum s vlastnou obálkou
+function sum(dur,vol,typ,frq,Q,pan,frq2){
+  if(!AC||!soundOn) return;
+  const n=Math.max(1,Math.floor(AC.sampleRate*dur));
+  const buf=AC.createBuffer(1,n,AC.sampleRate), d=buf.getChannelData(0);
+  for(let i=0;i<n;i++) d[i]=Math.random()*2-1;
+  const src=AC.createBufferSource(); src.buffer=buf;
+  const f=AC.createBiquadFilter(); f.type=typ||"bandpass";
+  f.frequency.setValueAtTime(frq,AC.currentTime);
+  if(frq2) f.frequency.exponentialRampToValueAtTime(Math.max(30,frq2),AC.currentTime+dur*0.9);
+  f.Q.value=Q||1;
+  const g=AC.createGain();
+  g.gain.setValueAtTime(0,AC.currentTime);
+  g.gain.linearRampToValueAtTime(vol,AC.currentTime+Math.min(0.05,dur*0.2));
+  g.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+dur);
+  src.connect(f); f.connect(g); g.connect(_vystup(pan));
+  src.start(); src.stop(AC.currentTime+dur+0.02);
+}
+// tón s chvením (vibrato) a formantom — základ každého zvieracieho hlasu
+function ton(o){
+  if(!AC||!soundOn) return;
+  const t0=AC.currentTime+(o.od||0), dur=o.d;
+  const osc=AC.createOscillator(); osc.type=o.t||"sawtooth";
+  osc.frequency.setValueAtTime(o.f,t0);
+  if(o.f2) osc.frequency.exponentialRampToValueAtTime(Math.max(20,o.f2),t0+dur*0.85);
+  if(o.vib){                                   // chvenie hlasu
+    const lfo=AC.createOscillator(), la=AC.createGain();
+    lfo.frequency.value=o.vib; la.gain.value=o.vibA||o.f*0.03;
+    lfo.connect(la); la.connect(osc.frequency); lfo.start(t0); lfo.stop(t0+dur+0.05);
+  }
+  const fm=AC.createBiquadFilter();            // formant = rezonancia hrdla
+  fm.type="bandpass"; fm.frequency.value=o.fmt||o.f*3; fm.Q.value=o.fmtQ||1.4;
+  const g=AC.createGain();
+  const a=o.a===undefined? 0.02 : o.a;
+  g.gain.setValueAtTime(0.0001,t0);
+  g.gain.exponentialRampToValueAtTime(Math.max(0.001,o.v),t0+a);
+  g.gain.setValueAtTime(Math.max(0.001,o.v),t0+Math.max(a,dur*(o.drz||0.45)));
+  g.gain.exponentialRampToValueAtTime(0.0001,t0+dur);
+  osc.connect(fm); fm.connect(g); g.connect(_vystup(o.pan));
+  osc.start(t0); osc.stop(t0+dur+0.03);
+}
 /* Hlasy zvierat. Znejú zľava alebo zprava podľa toho, kde zviera stojí —
-   dá sa podľa nich naozaj hľadať. */
-const HLASY={
-  cat:   sp=>({f:rnd(90,140),  d:0.85, t:"sawtooth", v:0.16, g:rnd(55,80)}),
-  slon:  sp=>({f:rnd(210,290), d:0.75, t:"square",   v:0.13, g:rnd(420,560)}),
-  vtak:  sp=>({f:rnd(1400,2800),d:0.10,t:"sine",     v:0.07, g:rnd(1800,3400)}),
-  kopyt: sp=>({f:rnd(240,380), d:0.22, t:"triangle", v:0.09, g:rnd(150,220)}),
-  opica: sp=>({f:rnd(500,900), d:0.18, t:"sine",     v:0.10, g:rnd(1100,1700)}),
-  pes:   sp=>({f:rnd(600,1100),d:0.14, t:"square",   v:0.09, g:rnd(300,500)}),
-  velky: sp=>({f:rnd(70,110),  d:1.10, t:"sawtooth", v:0.14, g:rnd(45,65)})
+   dá sa podľa nich naozaj hľadať. Každý hlas je poskladaný z viacerých
+   vrstiev, aby znel ako zviera a nie ako pípnutie. */
+const HLAS2={
+  // lev/leopard: hlboký rev s dychom a doznievajúcim mrmlaním
+  cat(v,pan){ const f=rnd(85,120);
+    sum(0.30,0.09*v,"bandpass",380,0.9,pan,190);
+    ton({f:f*1.9,f2:f*0.85,d:1.05,t:"sawtooth",v:0.17*v,fmt:f*4.2,fmtQ:2.2,vib:5.5,drz:0.35,a:0.05,pan});
+    ton({f:f*0.95,f2:f*0.6,d:1.25,t:"triangle",v:0.11*v,fmt:f*2.1,drz:0.4,a:0.08,od:0.06,pan});
+    setTimeout(()=>{ ton({f:f*0.8,f2:f*0.55,d:0.7,t:"sawtooth",v:0.07*v,fmt:f*2,vib:7,drz:0.3,pan}); },1150);
+  },
+  // slon: trúbenie — rýchly nábeh nahor a zostup, plus dunenie
+  slon(v,pan){ const f=rnd(190,240);
+    ton({f:f*0.55,f2:f*0.5,d:0.9,t:"sine",v:0.10*v,fmt:90,drz:0.5,a:0.06,pan});     // infra dunenie
+    ton({f:f,f2:f*2.6,d:0.22,t:"square",v:0.13*v,fmt:f*3,fmtQ:2,a:0.015,drz:0.5,pan});
+    ton({f:f*2.6,f2:f*1.7,d:0.55,t:"sawtooth",v:0.12*v,fmt:f*5,fmtQ:2.6,vib:9,vibA:60,drz:0.55,od:0.2,pan});
+    sum(0.25,0.05*v,"highpass",1200,0.7,pan);
+  },
+  // vták: trilok — niekoľko rýchlych tónov s kĺzaním
+  vtak(v,pan){ const f=rnd(1500,2900), n=ri(3,6);
+    for(let i=0;i<n;i++){
+      const sm=rnd(0.86,1.22);
+      ton({f:f*sm,f2:f*sm*rnd(1.1,1.5),d:0.075,t:"sine",v:0.075*v,fmt:f*sm,fmtQ:6,
+           a:0.006,drz:0.3,od:i*rnd(0.075,0.13),pan});
+    }
+    if(Math.random()<0.4) ton({f:f*0.55,f2:f*0.7,d:0.16,t:"triangle",v:0.05*v,od:n*0.11,pan});
+  },
+  // kopytník: krátke frknutie s dychom
+  kopyt(v,pan){ const f=rnd(230,340);
+    sum(0.16,0.10*v,"bandpass",900,0.8,pan,420);
+    ton({f:f,f2:f*0.62,d:0.26,t:"sawtooth",v:0.10*v,fmt:f*2.6,fmtQ:1.8,vib:14,drz:0.3,a:0.012,pan});
+  },
+  // opica: štekavé „hu-hu" stúpajúce nahor
+  opica(v,pan){ const f=rnd(430,760), n=ri(2,4);
+    for(let i=0;i<n;i++)
+      ton({f:f*(1+i*0.16),f2:f*(1.5+i*0.2),d:0.13,t:"sine",v:0.11*v,fmt:f*2.4,fmtQ:3,
+           a:0.008,drz:0.35,od:i*0.17,pan});
+  },
+  // pes hyenovitý / hyena: štekot a zaskučanie
+  pes(v,pan){ const f=rnd(520,900);
+    sum(0.07,0.08*v,"bandpass",1600,1.2,pan);
+    ton({f:f,f2:f*0.45,d:0.15,t:"square",v:0.10*v,fmt:f*2.2,fmtQ:2,a:0.006,drz:0.25,pan});
+    if(Math.random()<0.55) ton({f:f*1.3,f2:f*2.4,d:0.3,t:"sine",v:0.06*v,vib:11,od:0.22,pan});
+  },
+  // nosorožec/hroch/buvol: hlboké zafunenie
+  velky(v,pan){ const f=rnd(62,95);
+    ton({f:f,f2:f*0.72,d:1.15,t:"sawtooth",v:0.15*v,fmt:f*2.4,fmtQ:1.6,vib:4,drz:0.45,a:0.07,pan});
+    sum(0.45,0.09*v,"lowpass",520,0.6,pan,220);
+    if(Math.random()<0.5) setTimeout(()=>sum(0.3,0.07*v,"bandpass",700,0.8,pan,300),900);
+  }
 };
 const HLAS_DRUH={
   lion:"cat",leopard:"cat",tiger:"cat",jaguar:"cat",cheetah:"cat",ocelot:"cat",serval:"cat",
@@ -1982,32 +2105,62 @@ function hlasZvierata(){
   const blizke=game.animals.filter(a=>a.state==="idle"&&a.d<200);
   if(!blizke.length) return;
   const a=pick(blizke);
-  const kat=HLAS_DRUH[a.sp.id]||"kopyt", h=HLASY[kat](a.sp);
+  const kat=HLAS_DRUH[a.sp.id]||"kopyt";
   const dv=angDiff(a.ang,game.yaw);
   const pan=clamp(Math.sin(dv*D2R)*1.4,-1,1);
-  const hlas=h.v*clamp(1.15-a.d/220,0.18,1);
-  beep(h.f,h.d,h.t,hlas,pan,h.g);
-  if(kat==="cat"&&Math.random()<0.5) setTimeout(()=>beep(h.f*0.92,h.d*0.8,h.t,hlas*0.8,pan,h.g*0.9),Math.round(h.d*900));
-  if(kat==="vtak") for(let i=1;i<ri(2,4);i++) setTimeout(()=>beep(h.f*rnd(0.9,1.15),h.d,h.t,hlas,pan,h.g),i*110);
+  // vzdialené zviera znie tichšie a temnejšie — vzduch pohltí vysoké tóny
+  const hlas=clamp(1.18-a.d/210,0.16,1);
+  (HLAS2[kat]||HLAS2.kopyt)(hlas,pan);
 }
 function cvrcek(){                 // nočné cvrčky a žaby
   if(!AC||!soundOn) return;
-  const f=rnd(2600,4200), n=ri(3,6);
-  for(let i=0;i<n;i++) setTimeout(()=>beep(f,0.022,"square",0.022),i*70);
-  if(Math.random()<0.25) setTimeout(()=>beep(rnd(160,260),0.22,"sine",0.05),400);
+  const f=rnd(2900,4400), n=ri(4,8), p=rnd(-0.8,0.8);
+  for(let i=0;i<n;i++) ton({f:f,d:0.020,t:"square",v:0.020,fmt:f,fmtQ:9,a:0.003,drz:0.4,od:i*0.058,pan:p});
+  if(Math.random()<0.30)          // žaba
+    ton({f:rnd(150,240),f2:rnd(110,180),d:0.20,t:"sawtooth",v:0.055,fmt:600,fmtQ:3,
+         vib:22,od:0.42,pan:rnd(-0.9,0.9)});
 }
-function chirp(){
-  const f=rnd(1600,3400);
-  beep(f,0.09,"sine",0.05); setTimeout(()=>beep(f*1.18,0.07,"sine",0.04),110);
+function sova(){                   // nočná sova — dve hlboké húknutia
+  const p=rnd(-0.7,0.7), f=rnd(330,430);
+  ton({f:f,f2:f*0.92,d:0.34,t:"sine",v:0.075,fmt:f*2,fmtQ:5,a:0.05,drz:0.5,pan:p});
+  ton({f:f*0.94,f2:f*0.86,d:0.40,t:"sine",v:0.065,fmt:f*2,fmtQ:5,a:0.06,drz:0.5,od:0.55,pan:p});
 }
+function hmyz(){                   // denné bzučanie hmyzu, ktoré preletí okolo
+  const p=rnd(-1,1);
+  ton({f:rnd(180,280),f2:rnd(150,240),d:rnd(0.5,1.0),t:"sawtooth",v:0.030,
+       fmt:900,fmtQ:2,vib:26,vibA:14,drz:0.6,a:0.15,pan:p});
+}
+function chirp(){                  // denný vtáčí spev v pozadí
+  const f=rnd(1800,3600), p=rnd(-0.9,0.9), n=ri(2,4);
+  for(let i=0;i<n;i++){
+    const sm=rnd(0.9,1.25);
+    ton({f:f*sm,f2:f*sm*rnd(1.15,1.6),d:0.07,t:"sine",v:0.045,fmt:f*sm,fmtQ:7,
+         a:0.005,drz:0.3,od:i*rnd(0.09,0.15),pan:p});
+  }
+}
+/* Spúšť zrkadlovky má dva mechanické cvaky: zdvih zrkadla a jeho návrat.
+   Jediný šum znel lacno. */
 function shutterSnd(){
   if(!AC||!soundOn) return;
-  const len=Math.floor(AC.sampleRate*0.09), buf=AC.createBuffer(1,len,AC.sampleRate), d=buf.getChannelData(0);
-  for(let i=0;i<len;i++){ const k=i/len; d[i]=(Math.random()*2-1)*Math.pow(1-k,3)*(k<0.14?1:0.35); }
-  const s=AC.createBufferSource(); s.buffer=buf;
-  const f=AC.createBiquadFilter(); f.type="bandpass"; f.frequency.value=2600; f.Q.value=1.1;
-  const g=AC.createGain(); g.gain.value=0.5;
-  s.connect(f); f.connect(g); g.connect(master); s.start();
+  const cvak=(od,vol,frq)=>{
+    const len=Math.floor(AC.sampleRate*0.035);
+    const buf=AC.createBuffer(1,len,AC.sampleRate), d=buf.getChannelData(0);
+    for(let i=0;i<len;i++){ const k=i/len; d[i]=(Math.random()*2-1)*Math.pow(1-k,5); }
+    const src=AC.createBufferSource(); src.buffer=buf;
+    const f=AC.createBiquadFilter(); f.type="bandpass"; f.frequency.value=frq; f.Q.value=1.6;
+    const g=AC.createGain(); g.gain.value=vol;
+    src.connect(f); f.connect(g); g.connect(master);
+    src.start(AC.currentTime+od); src.stop(AC.currentTime+od+0.05);
+    // kovový podtón mechaniky
+    ton({f:frq*0.42,f2:frq*0.3,d:0.05,t:"triangle",v:vol*0.5,fmt:frq,fmtQ:5,a:0.002,drz:0.2,od:od});
+  };
+  cvak(0,    0.42, 3100);          // zrkadlo hore
+  cvak(0.055,0.30, 2300);          // zrkadlo dole
+  sum(0.05,0.10,"highpass",4200,0.7);
+}
+function zaostreneSnd(){           // jemné pípnutie potvrdenia ostrosti
+  ton({f:1560,d:0.055,t:"sine",v:0.07,fmt:3200,fmtQ:5,a:0.004,drz:0.4});
+  ton({f:2340,d:0.070,t:"sine",v:0.055,fmt:4600,fmtQ:5,a:0.004,drz:0.4,od:0.07});
 }
 
 /* ----------------------------------------------------------- HRA / STAV -- */
@@ -2335,7 +2488,8 @@ function updateThreat(dt){
     game.danger=Math.min(0.35,T.t/7*0.35);
     if(!T.rada && T.t>2.0){ T.rada=1;
       toast(TX("Blíži sa predátor","A predator is coming"),
-            TX("Priprav sa: Shift = nehýbať sa, U = utiecť","Get ready: Shift = hold still, U = run"),""); }
+            isTouch? TX("Priprav sa: podrž STÁŤ alebo ťukni na ÚTEK","Get ready: hold HOLD or tap RUN")
+                   : TX("Priprav sa: Shift = nehýbať sa, U = utiecť","Get ready: Shift = hold still, U = run"),""); }
     if(T.t>7){ T.phase="warn"; T.t=0; game.threatSafeT=0;
       beep(90,1.2,"sawtooth",0.20); }
     return;
@@ -2347,7 +2501,9 @@ function updateThreat(dt){
   // znehybnieť treba VEDOME: podržať Shift (alebo tlačidlo na dotyku) a nehýbať kamerou.
   // Samotné státie nestačí — predátor sa nezľakne toho, že hráč nič nerobí.
   const stojiTicho = (game.holding||game.steadyBtn) && game.angSpeed<8;
-  if(stojiTicho) game.threatSafeT+=dt; else game.threatSafeT=0;
+  // reálnym časom, nie herným — na slabom tablete pri 5 fps by "3 sekundy
+  // nehýbať sa" inak trvali dvanásť
+  if(stojiTicho) game.threatSafeT+=(game._dtCas||dt); else game.threatSafeT=0;
   if(game.threatSafeT>3.0){ toast(t("thSafe"),"",""); beep(420,0.2,"sine",0.10); endThreat(); return; }
   if(T.t>WARN){
     if(game.medkit){ game.medkit=false;
@@ -2774,7 +2930,7 @@ function drawHUD(vf){
     const d=denny(); let ind="";
     if(game.nv) ind="🌙 "+TX("noč. videnie","night vision");
     else if(d.svet<0.48) ind = game.flashOn? (game.flashCd>0? "⚡ …" : "⚡ "+TX("blesk","flash"))
-                                           : "⚡ "+TX("vypnutý (B)","off (B)");
+                                           : "⚡ "+(isTouch? TX("vypnutý","off") : TX("vypnutý (B)","off (B)"));
     if(ind){
       ctx.font=Math.max(10,Math.round(mw*0.014))+"px 'Trebuchet MS',sans-serif";
       ctx.fillStyle= game.nv? "#8fe8a8" : game.flashOn? "#ffd97a" : "rgba(255,140,110,.9)";
@@ -2941,7 +3097,8 @@ function drawHUD(vf){
     ctx.fillText(t("thWarn"), L+mw/2, Tp+mh*0.13);
     ctx.fillStyle="#ffd97a";
     ctx.font="bold "+Math.max(12,Math.round(mw*0.019))+"px 'Trebuchet MS',sans-serif";
-    ctx.fillText(t("thHow"), L+mw/2, Tp+mh*0.13+Math.max(22,mw*0.038));
+    ctx.fillText(isTouch? TX("Podrž STÁŤ alebo ťukni na ÚTEK","Hold HOLD or tap RUN")
+                        : t("thHow"), L+mw/2, Tp+mh*0.13+Math.max(22,mw*0.038));
     // ako dlho ešte vydrží stáť / koľko času zostáva
     const bw3=mw*0.30, bx3=L+mw/2-bw3/2, by3=Tp+mh*0.13+Math.max(44,mw*0.062);
     ctx.fillStyle="rgba(0,0,0,.5)"; ctx.fillRect(bx3,by3,bw3,7);
@@ -3056,7 +3213,9 @@ function evaluateShot(){
 
   // spätná väzba
   let fb;
-  if(expo<0.6) fb=TX("Tmavé — zapni blesk (B) alebo si vezmi nočné videnie",
+  if(expo<0.6) fb=isTouch? TX("Tmavé — zapni blesk ⚡ alebo si vezmi nočné videnie",
+                            "Dark — switch the ⚡ flash on or bring night vision")
+                        : TX("Tmavé — zapni blesk (B) alebo si vezmi nočné videnie",
                      "Too dark — turn on the flash (B) or pack night vision");
   else if(mladaBonus) fb=TX("Mláďa s matkou — nádhera!","A youngster with its mother — beautiful!");
   else if(vPohybe && sharp>0.6) fb=TX("Zachytil si ho v pohybe!","Caught it on the move!");
@@ -3201,16 +3360,31 @@ cv.addEventListener("touchmove",e=>{
   e.preventDefault();
   if(e.touches.length===1 && lastTouch){
     const k=game.fov/W*1.25;
-    game.panX -= (e.touches[0].clientX-lastTouch.x)*k;
-    game.panY += (e.touches[0].clientY-lastTouch.y)*k*0.9;
+    // Prst vedie kameru: ťah doľava = pozeráš doľava (rovnako ako myšou).
+    // Zároveň sa uhol mení HNEĎ, nie cez vyhladzovací zásobník — ten pridával
+    // na tablete citeľné oneskorenie. Dotyk chodí sám o sebe plynulo.
+    const dx=(e.touches[0].clientX-lastTouch.x)*k;
+    const dy=(e.touches[0].clientY-lastTouch.y)*k*0.9;
+    game.yaw=(game.yaw+dx+360)%360;
+    game.pitch=clamp(game.pitch-dy,-16,42);
     lastTouch={x:e.touches[0].clientX,y:e.touches[0].clientY};
   } else if(e.touches.length===2){
     const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
-    if(pinchD>0) game.fovT=clamp(game.fovT*(pinchD/d), FOV_MIN, FOV_MAX);
+    if(pinchD>0){ const nf=clamp(game.fovT*(pinchD/d), FOV_MIN, FOV_MAX);
+      game.fovT=nf; game.fov=nf; }        // štipka reaguje okamžite
     pinchD=d;
   }
 },{passive:false});
-cv.addEventListener("touchend",()=>{ lastTouch=null; pinchD=0; });
+function _touchKoniec(e){
+  pinchD=0;
+  // Po zdvihnutí jedného prsta zo štipky ostával druhý na skle, ale lastTouch
+  // bol null a otáčanie prestalo fungovať. Preto ho preberieme na zvyšný prst.
+  const z=e&&e.touches&&e.touches[0];
+  lastTouch = z? {x:z.clientX,y:z.clientY} : null;
+}
+cv.addEventListener("touchend",_touchKoniec);
+// bez touchcancel ostala stará poloha prsta a kamera po systémovom geste skočila
+cv.addEventListener("touchcancel",()=>{ lastTouch=null; pinchD=0; });
 
 function bindTouch(id,down,up){
   const el=document.getElementById(id); if(!el) return;
@@ -3231,8 +3405,19 @@ function bindTouch(id,down,up){
 }
 bindTouch("tShot",()=>doShot());
 bindTouch("tFoc",()=>game.focusing=true,()=>game.focusing=false);
-bindTouch("tIn",()=>game.fovT=clamp(game.fovT*0.72,FOV_MIN,FOV_MAX));
-bindTouch("tOut",()=>game.fovT=clamp(game.fovT*1.38,FOV_MIN,FOV_MAX));
+// zoom sa dá aj podržať — jedno ťuknutie je krok, držanie plynulý nájazd
+let _zoomTik=null;
+function zoomDrz(smer){
+  game.fovT=clamp(game.fovT*(smer<0?0.80:1.25),FOV_MIN,FOV_MAX);
+  clearInterval(_zoomTik);
+  _zoomTik=setInterval(()=>{
+    if(game.screen!=="play"){ clearInterval(_zoomTik); return; }
+    game.fovT=clamp(game.fovT*(smer<0?0.955:1.047),FOV_MIN,FOV_MAX);
+  },40);
+}
+function zoomPusti(){ clearInterval(_zoomTik); _zoomTik=null; }
+bindTouch("tIn", ()=>zoomDrz(-1), zoomPusti);
+bindTouch("tOut",()=>zoomDrz(1),  zoomPusti);
 bindTouch("tRun",()=>{ if(game.threat&&game.threat.phase==="warn") game.fleeReq=true; });
 bindTouch("tStay",()=>game.steadyBtn=true,()=>game.steadyBtn=false);
 bindTouch("tMove",()=>presun());
@@ -3240,7 +3425,13 @@ bindTouch("tFlash",()=>{ if(game.mod.nv){ game.nvManual=true; game.nv=!game.nv;
     toast(TX("Nočné videnie","Night vision")+": "+(game.nv?TX("zapnuté","on"):TX("vypnuté","off")),"",""); }
   else { game.flashOn=!game.flashOn;
     toast(TX("Blesk","Flash")+": "+(game.flashOn?TX("zapnutý","on"):TX("vypnutý","off")),"",""); } });
-bindTouch("tWater",()=>{ if(game.water>0) useItem("voda"); else useItem("jedlo"); });
+bindTouch("tWater",()=>{
+  if(game.water>0){ useItem("voda"); }
+  else if(game.food>0){ useItem("jedlo"); }
+  else toast(TX("Nemáš už čo piť ani jesť","Nothing left to drink or eat"),"",
+             TX("Vodu a jedlo si zbaľ do batoha pred odchodom z tábora.",
+                "Pack water and food in your backpack before leaving camp."));
+});
 
 /* -------------------------------------------------------------- SLUČKA --- */
 let prevYaw=0, prevPitch=0, lastT=performance.now(), _runShown=false;
@@ -3257,6 +3448,7 @@ function krok(now){
   const raw=(now-lastT)/1000; lastT=now;
   const dt=Math.min(0.05,raw);          // fyzika ostáva stabilná aj pri zaseknutí
   const dtCas=Math.min(0.30,raw);       // odpočet kola musí ísť reálnym časom
+  game._dtCas=dtCas;
   game.dt=dt; game.t+=dt;
   // ak hra nestíha 60 snímok, radšej zníži rozlíšenie, než by sekala
   if(game.screen==="play"){
@@ -3277,9 +3469,10 @@ function krok(now){
     if(keys.Equal||keys.NumpadAdd) game.fovT=clamp(game.fovT*0.97,FOV_MIN,FOV_MAX);
     if(keys.Minus||keys.NumpadSubtract) game.fovT=clamp(game.fovT*1.03,FOV_MIN,FOV_MAX);
     game.focusing = game.focusing || !!keys.KeyF;
-    game.holding = !!(keys.ShiftLeft||keys.ShiftRight);
+    // na tablete nie je Shift — rovnaký účinok musí mať dotykové tlačidlo STÁŤ
+    game.holding = !!(keys.ShiftLeft||keys.ShiftRight||game.steadyBtn);
     // nahromadený pohyb sa rozloží do viacerých snímok — inak je otáčanie trhané
-    { const k=1-Math.exp(-28*dt), ax=game.panX*k, ay=game.panY*k;
+    { const k=1-Math.exp(-55*dt), ax=game.panX*k, ay=game.panY*k;
       game.yaw += ax; game.pitch = clamp(game.pitch+ay,-16,42);
       game.panX -= ax; game.panY -= ay;
       if(Math.abs(game.panX)<1e-4) game.panX=0;
@@ -3287,7 +3480,7 @@ function krok(now){
     game.yaw=(game.yaw+360)%360;
 
     // zoom plynulo
-    game.fov = lerp(game.fov, game.fovT, 1-Math.pow(0.001,dt));
+    game.fov = lerp(game.fov, game.fovT, 1-Math.pow(0.000002,dt));
 
     // uhlová rýchlosť (na plašenie + rozmazanie pohybom)
     const dy=Math.abs(angDiff(game.yaw,prevYaw)), dp=Math.abs(game.pitch-prevPitch);
@@ -3334,7 +3527,7 @@ function krok(now){
       game.afLock = rel<0.03?1:0;
       // po zaostrení sa zaostrí presne — inak je aj „zaostrený" obraz pri 300 mm mäkký
       if(game.afLock>0.7) game.focus=game.focusT;
-      if(game.afLock>0.7 && wasLock<0.7) beep(1400,0.06,"sine",0.10);
+      if(game.afLock>0.7 && wasLock<0.7) zaostreneSnd();
     } else { game.afLock=Math.max(0,game.afLock-dt*3); game.afHold=null; }
 
     updateAnimals(dt);
@@ -3764,6 +3957,7 @@ function startExpedition(){
   if(p.job && SP[p.job.sp]) spawnDruh(SP[p.job.sp]);
   show(null);
   document.getElementById("touch").classList.toggle("on", isTouch);
+  zasobyNaTlacidle();
   document.getElementById("lang").classList.add("hraje");
   hintEl.textContent=t("clickPlay");
   hintEl.classList.toggle("on", !isTouch);
@@ -3787,12 +3981,24 @@ function presun(){
 }
 function useItem(kind){
   if(game.screen!=="play") return;
+  if(kind==="voda" && game.water<=0 && game.food<=0){
+    toast(TX("Nemáš už čo piť ani jesť","Nothing left to drink or eat"),"",
+          TX("Vodu a jedlo si zbaľ do batoha pred odchodom z tábora.",
+             "Pack water and food in your backpack before leaving camp.")); return;
+  }
+  if(kind==="voda" && game.water<=0 && game.food>0) kind="jedlo";
+  if(kind==="jedlo" && game.food<=0 && game.water>0) kind="voda";
   if(kind==="voda" && game.water>0){
     game.water--; game.stam=Math.min(100,game.stam+45);
-    beep(620,0.12,"sine",0.09); toast(TX("Napil si sa","You drank"),"+45 "+TX("vytrvalosti","stamina"),"");
+    zasobyNaTlacidle();
+    ton({f:520,f2:840,d:0.18,t:"sine",v:0.09,fmt:1400,fmtQ:4,a:0.01,drz:0.3});
+    ton({f:300,f2:520,d:0.14,t:"triangle",v:0.05,od:0.09});
+    toast(TX("Napil si sa","You drank"),"+45 "+TX("vytrvalosti","stamina"),"");
   } else if(kind==="jedlo" && game.food>0){
     game.food--; game.stam=Math.min(100,game.stam+30);
-    beep(540,0.12,"sine",0.09); toast(TX("Najedol si sa","You ate"),"+30 "+TX("vytrvalosti","stamina"),"");
+    zasobyNaTlacidle();
+    ton({f:420,f2:600,d:0.16,t:"triangle",v:0.08,fmt:1100,fmtQ:3,a:0.01,drz:0.35});
+    toast(TX("Najedol si sa","You ate"),"+30 "+TX("vytrvalosti","stamina"),"");
   }
 }
 function endRound(reason){
@@ -4318,6 +4524,14 @@ function popisTlacidiel(){
   const q=(id,tx)=>{const e=document.getElementById(id); if(e) e.textContent=tx;};
   q("tRun", TX("ÚTEK","RUN")); q("tStay", TX("STÁŤ","HOLD"));
   q("tMove", TX("INAM","MOVE"));
+  zasobyNaTlacidle();
+}
+// hráč musí vidieť, či ešte má čo piť — inak ťuká na tlačidlo, ktoré nič nerobí
+function zasobyNaTlacidle(){
+  const e=document.getElementById("tWater"); if(!e) return;
+  const n=(game.water||0)+(game.food||0);
+  e.textContent = n>0? "💧"+n : "💧";
+  e.style.opacity = n>0? "" : "0.4";
 }
 function setLang(l){
   LANG=l;
